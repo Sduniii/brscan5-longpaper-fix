@@ -25,7 +25,7 @@ DEV=$(SANE_CONFIG_DIR="$TMP_SANE" scanimage -L 2>/dev/null | grep -o "brother5:[
 rm -rf "$TMP_SANE"
 
 if [ -z "$DEV" ]; then
-    DEV="brother5:bus1;dev2"
+    DEV="brother5:bus4;dev2"
 fi
 
 echo "Scanne über $DEV (Simplex, Überlänge bis 1828mm)..."

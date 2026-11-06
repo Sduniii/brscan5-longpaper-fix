@@ -20,7 +20,7 @@ make all
 SANE_LIB_DIR="/usr/lib/sane"
 ORIG_LIB="$SANE_LIB_DIR/libsane-brother5.so.1.0.7"
 BACKUP_LIB="$SANE_LIB_DIR/libsane-brother5-real.so.1.0.7"
-TARGET_SO="$SCRIPT_DIR/build/libbrother5_longpaper.so"
+TARGET_SO="$SCRIPT_DIR/out/libbrother5_longpaper.so"
 
 if [ ! -f "$ORIG_LIB" ]; then
     echo "[!] Error: Brother SANE driver not found at $ORIG_LIB" >&2
@@ -37,11 +37,9 @@ if [ ! -f "$BACKUP_LIB" ]; then
 fi
 
 echo "==> Installing long-paper shim to $ORIG_LIB..."
-cp -f "$TARGET_SO" "$ORIG_LIB"
-chmod 755 "$ORIG_LIB"
-
-# Also install helper library to /usr/lib
-install -d /usr/lib
+rm -f "$ORIG_LIB"
+install -m 755 "$TARGET_SO" "$ORIG_LIB"
+rm -f /usr/lib/libbrother5_longpaper.so
 install -m 755 "$TARGET_SO" /usr/lib/libbrother5_longpaper.so
 
 # Ensure ldconfig is run

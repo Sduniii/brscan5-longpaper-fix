@@ -59,6 +59,7 @@ typedef struct {
 #define SANE_STATUS_GOOD 0
 #define SANE_FIX_MM(mm) ((SANE_Word)((mm) * 65536.0))
 #define LONG_PAPER_MAX_MM 1828.8 /* Hardware limit: 72 inches = 1828.8 mm */
+#define LONG_PAPER_MAX_HUNDREDTH_MM 182880 /* 1828.8 mm in units of 0.01 mm */
 
 static void *g_real_lib_handle = NULL;
 static int g_debug = -1;
@@ -101,13 +102,13 @@ static void *get_real_symbol(const char *name) {
 static void patch_range_y(void) {
     void *handle = g_real_lib_handle;
     if (!handle) {
-        handle = dlopen("libsane-brother5.so.1", RTLD_NOLOAD | RTLD_GLOBAL);
-    }
-    if (!handle) {
-        handle = dlopen("/usr/lib/sane/libsane-brother5.so.1", RTLD_NOLOAD | RTLD_GLOBAL);
+        handle = dlopen("libsane-brother5-real.so.1", RTLD_NOLOAD | RTLD_GLOBAL);
     }
     if (!handle) {
         handle = dlopen("/usr/lib/sane/libsane-brother5-real.so.1", RTLD_NOLOAD | RTLD_GLOBAL);
+    }
+    if (!handle) {
+        handle = dlopen("/usr/lib/sane/libsane-brother5.so.1", RTLD_NOLOAD | RTLD_GLOBAL);
     }
 
     if (handle) {
@@ -121,6 +122,132 @@ static void patch_range_y(void) {
                 }
                 rY->max = new_max;
             }
+        }
+    }
+}
+
+static void patch_dev_caps(SANE_Handle handle) {
+    if (!handle) return;
+    char *pDev = (char *)handle;
+    char *pCaps = *(char **)(pDev + 0x450);
+    if (pCaps) {
+        int *h_adf = (int *)(pCaps + 0x58c);
+        if (*h_adf < LONG_PAPER_MAX_HUNDREDTH_MM) {
+            if (is_debug_enabled()) {
+                fprintf(stderr, "[brother5-longpaper] Patching adf_max_height: %d -> %d\n",
+                        *h_adf, LONG_PAPER_MAX_HUNDREDTH_MM);
+            }
+            *h_adf = LONG_PAPER_MAX_HUNDREDTH_MM;
+        }
+
+        /* Patch LongPaper capabilities in pCaps:
+         * 0x124: longPaperSupport (2 = SUPPORTED)
+         * 0x12c: longPaperMaxLength simplex (182880 = 1828.8 mm)
+         * 0x134: longPaperMaxLength duplex (182880)
+         */
+        int *pLongSupport = (int *)(pCaps + 0x124);
+        int *pLongMaxSimplex = (int *)(pCaps + 0x12c);
+        int *pLongMaxDuplex = (int *)(pCaps + 0x134);
+
+        if (*pLongSupport != 2 || *pLongMaxSimplex < LONG_PAPER_MAX_HUNDREDTH_MM) {
+            if (is_debug_enabled()) {
+                fprintf(stderr, "[brother5-longpaper] Patching pCaps LongPaper caps: support %d->2, maxSimplex %d->%d\n",
+                        *pLongSupport, *pLongMaxSimplex, LONG_PAPER_MAX_HUNDREDTH_MM);
+            }
+            *pLongSupport = 2;
+            *pLongMaxSimplex = LONG_PAPER_MAX_HUNDREDTH_MM;
+            *pLongMaxDuplex = LONG_PAPER_MAX_HUNDREDTH_MM;
+        }
+    }
+}
+
+/*
+ * Hooks for Brother Core API (libLxBsScanCoreApi.so) and bssdkwrapper
+ */
+
+int bssdkwrapper_StartScanning(void *pScanParam) {
+    if (is_debug_enabled()) {
+        fprintf(stderr, "[brother5-longpaper] bssdkwrapper_StartScanning intercepted (%p)\n", pScanParam);
+    }
+    if (pScanParam) {
+        uint32_t *pPaperType = (uint32_t *)((char *)pScanParam + 0xc);
+        uint32_t *pSizeX = (uint32_t *)((char *)pScanParam + 0x10);
+        uint32_t *pSizeY = (uint32_t *)((char *)pScanParam + 0x14);
+        uint8_t *pAutoDeskew = (uint8_t *)((char *)pScanParam + 0x49);
+        uint8_t *pAutoCrop = (uint8_t *)((char *)pScanParam + 0x4a);
+
+        if (is_debug_enabled()) {
+            fprintf(stderr, "[brother5-longpaper] Original scanParam: papertype=%u, size=(%u, %u), deskew=%u, crop=%u\n",
+                    *pPaperType, *pSizeX, *pSizeY, *pAutoDeskew, *pAutoCrop);
+        }
+
+        /* Set papertype = 0x17 (LONGPAPER_NARROW / continuous receipt) */
+        *pPaperType = 0x17;
+
+        /* Hardware auto-deskew and auto-crop cannot run in firmware with LongPaper */
+        *pAutoDeskew = 0;
+        *pAutoCrop = 0;
+
+        if (is_debug_enabled()) {
+            fprintf(stderr, "[brother5-longpaper] Applied LONGPAPER scanParam: papertype=0x17, deskew=0, crop=0\n");
+        }
+    }
+
+    int (*real_fn)(void *) = get_real_symbol("bssdkwrapper_StartScanning");
+    if (!real_fn) {
+        real_fn = dlsym(RTLD_NEXT, "bssdkwrapper_StartScanning");
+    }
+    return real_fn ? real_fn(pScanParam) : 0;
+}
+
+/*
+ * libLxBsScanCoreApi.so hooks:
+ * IsLongPaperScanSetting -> always return true
+ */
+int _ZN6bscore10CScanParam22IsLongPaperScanSettingENS_9PAPERTYPEE(void *thiz, int paperType) {
+    (void)thiz;
+    if (is_debug_enabled()) {
+        fprintf(stderr, "[brother5-longpaper] IsLongPaperScanSetting(paperType=%d) -> returning 1 (true)\n", paperType);
+    }
+    return 1;
+}
+
+/*
+ * libLxBsScanCoreApi.so hooks:
+ * MakeLongPaperModeString -> always forward enable=true to produce "LONG=ON,"
+ */
+void _ZN6bscore13CCmdString_v223MakeLongPaperModeStringEb(void *result, void *thiz, int enable) {
+    void (*real_fn)(void *, void *, int) = dlsym(RTLD_NEXT, "_ZN6bscore13CCmdString_v223MakeLongPaperModeStringEb");
+    if (is_debug_enabled()) {
+        fprintf(stderr, "[brother5-longpaper] MakeLongPaperModeString(enable=%d) -> forcing enable=1 (LONG=ON)\n", enable);
+    }
+    if (real_fn) {
+        real_fn(result, thiz, 1);
+    }
+}
+
+/*
+ * libLxBsScanCoreApi.so hooks:
+ * ChangeLongPaperIfNeeded -> ensure papertype=0x17 and size={0,0}
+ */
+void _ZN6bscore21CReadPreparation_base23ChangeLongPaperIfNeededERNS_15tagSCANAREAINFOERKj(void *pScanAreaInfo, const unsigned int *res) {
+    (void)res;
+    if (is_debug_enabled()) {
+        fprintf(stderr, "[brother5-longpaper] ChangeLongPaperIfNeeded intercepted (%p)\n", pScanAreaInfo);
+    }
+    if (pScanAreaInfo) {
+        uint32_t *pPaperType = (uint32_t *)pScanAreaInfo;
+        uint32_t *pSizeX = (uint32_t *)((char *)pScanAreaInfo + 0x4);
+        uint32_t *pSizeY = (uint32_t *)((char *)pScanAreaInfo + 0x8);
+        if (is_debug_enabled()) {
+            fprintf(stderr, "[brother5-longpaper] ChangeLongPaper orig: papertype=%u, size=(%u, %u)\n",
+                    *pPaperType, *pSizeX, *pSizeY);
+        }
+        *pPaperType = 0x17;
+        *pSizeX = 0;
+        *pSizeY = 0;
+        if (is_debug_enabled()) {
+            fprintf(stderr, "[brother5-longpaper] ChangeLongPaper forced: papertype=0x17, size=(0, 0)\n");
         }
     }
 }
@@ -165,8 +292,9 @@ SANE_Status sane_brother5_open(SANE_String_Const name, SANE_Handle *handle) {
     if (!real_fn) return 4; /* SANE_STATUS_INVAL */
 
     SANE_Status res = real_fn(name, handle);
-    if (res == SANE_STATUS_GOOD) {
+    if (res == SANE_STATUS_GOOD && handle && *handle) {
         patch_range_y();
+        patch_dev_caps(*handle);
     }
     return res;
 }
@@ -189,6 +317,7 @@ const SANE_Option_Descriptor *sane_brother5_get_option_descriptor(SANE_Handle ha
     const SANE_Option_Descriptor *(*real_fn)(SANE_Handle, SANE_Int) = get_real_symbol("sane_brother5_get_option_descriptor");
     if (!real_fn) real_fn = get_real_symbol("sane_get_option_descriptor");
     patch_range_y();
+    if (handle) patch_dev_caps(handle);
     return real_fn ? real_fn(handle, option) : NULL;
 }
 
@@ -200,6 +329,7 @@ SANE_Status sane_brother5_control_option(SANE_Handle handle, SANE_Int option, SA
     SANE_Status (*real_fn)(SANE_Handle, SANE_Int, SANE_Action, void *, SANE_Int *) = get_real_symbol("sane_brother5_control_option");
     if (!real_fn) real_fn = get_real_symbol("sane_control_option");
     patch_range_y();
+    if (handle) patch_dev_caps(handle);
     return real_fn ? real_fn(handle, option, action, value, info) : 4;
 }
 
@@ -220,6 +350,8 @@ SANE_Status sane_get_parameters(SANE_Handle handle, SANE_Parameters *params) {
 SANE_Status sane_brother5_start(SANE_Handle handle) {
     SANE_Status (*real_fn)(SANE_Handle) = get_real_symbol("sane_brother5_start");
     if (!real_fn) real_fn = get_real_symbol("sane_start");
+    patch_range_y();
+    if (handle) patch_dev_caps(handle);
     return real_fn ? real_fn(handle) : SANE_STATUS_GOOD;
 }
 

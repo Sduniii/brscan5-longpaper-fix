@@ -6,18 +6,18 @@ PREFIX ?= /usr
 LIBDIR ?= $(PREFIX)/lib
 SANEDIR ?= $(LIBDIR)/sane
 
-TARGET = build/libbrother5_longpaper.so
+TARGET = out/libbrother5_longpaper.so
 
 all: $(TARGET)
 
-build:
-	mkdir -p build
+out:
+	mkdir -p out
 
-$(TARGET): src/brother5_longpaper.c | build
+$(TARGET): src/brother5_longpaper.c | out
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
-	rm -rf build
+	rm -rf out
 
 install: all
 	install -d $(DESTDIR)$(LIBDIR)
