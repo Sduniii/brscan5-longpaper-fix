@@ -1,0 +1,75 @@
+#!/bin/bash
+# One-Click Kassenbon Scanner für Brother DS-740D & mobile Brother-Scanner
+# Unterstützt Standard- und überlange Kassenbons bis 1,82 Meter!
+
+set -e
+
+SCAN_DIR="$HOME/Scans"
+mkdir -p "$SCAN_DIR"
+
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+TMP_DIR=$(mktemp -d /tmp/scanbon_XXXXXX)
+OUT_PDF="${SCAN_DIR}/Beleg_${TIMESTAMP}"
+
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+# 1. Scanner ermitteln (schnelle Abfrage)
+TMP_SANE="/tmp/sane_brother_query"
+mkdir -p "$TMP_SANE"
+echo "brother5" > "$TMP_SANE/dll.conf"
+
+DEV=$(SANE_CONFIG_DIR="$TMP_SANE" scanimage -L 2>/dev/null | grep -o "brother5:[^ ']*" | head -n1 || true)
+rm -rf "$TMP_SANE"
+
+if [ -z "$DEV" ]; then
+    DEV="brother5:bus1;dev2"
+fi
+
+echo "Scanne über $DEV (Simplex, Überlänge bis 1828mm)..."
+notify-send -i scanner "Brother Scanner" "Scanne Beleg (bis 1,82m)..." 2>/dev/null || true
+
+# 2. Scan durchführen (Simplex, -y 1828.8mm)
+scanimage -d "$DEV" \
+    --source "Automatic Document Feeder(left aligned)" \
+    --mode "24bit Color[Fast]" \
+    --resolution 200 \
+    -y 1828.8 \
+    --AutoDeskew=no \
+    --format=tiff \
+    --batch="${TMP_DIR}/page_%d.tiff" \
+    --batch-count=1 2>/dev/null
+
+SCANNED_PAGE="${TMP_DIR}/page_1.tiff"
+
+if [ ! -f "$SCANNED_PAGE" ] || [ ! -s "$SCANNED_PAGE" ]; then
+    notify-send -u critical "Scanner Fehler" "Kein Dokument eingezogen oder Scan abgebrochen." 2>/dev/null || true
+    echo "Fehler: Kein Bild erfasst." >&2
+    exit 1
+fi
+
+echo "Verarbeite Bild (Auto-Deskew, Auto-Trim)..."
+
+# 3. Weißraum am Ende automatisch trimmen und zuschneiden
+magick "$SCANNED_PAGE" \
+    -deskew 40% \
+    -fuzz 12% \
+    -trim +repage \
+    -bordercolor white -border 20 \
+    "${TMP_DIR}/trimmed.png"
+
+# 4. OCR mit Tesseract (Deutsch) und durchsuchbares PDF erzeugen
+echo "Führe Texterkennung (OCR Deutsch) durch..."
+tesseract "${TMP_DIR}/trimmed.png" "$OUT_PDF" -l deu pdf 2>/dev/null
+
+FINAL_FILE="${OUT_PDF}.pdf"
+
+if [ -f "$FINAL_FILE" ]; then
+    echo "Fertig! Gespeichert unter: $FINAL_FILE"
+    notify-send -i scanner "Kassenbon gespeichert" "Datei: Beleg_${TIMESTAMP}.pdf\nIn ~/Scans abgelegt" 2>/dev/null || true
+else
+    echo "Fehler bei PDF-Generierung." >&2
+    exit 1
+fi
