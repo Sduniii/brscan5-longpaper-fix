@@ -1,6 +1,6 @@
 # Maintainer: Sduniii <tobias@sduni.de>
 pkgname=brscan5-longpaper-fix
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="SANE driver shim to enable long paper & receipt scanning up to 1.82m on Brother DS-740D and brscan5 scanners"
 arch=('x86_64')
@@ -12,9 +12,9 @@ install=brother5-longpaper.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz"
         "brother5-longpaper.hook"
         "apply-patch.sh")
-sha256sums=('SKIP'
-            'SKIP'
-            'SKIP')
+sha256sums=('d73acfe2f260256484aabc71e752de5ae715c358b2fb7884d2d8f3b19680cfa1'
+            '3e1a557e14035e3540d9a9c64a7b2d68b172dba64d50080207ef37285fb6f634'
+            'ae44262f8f5fe61788d8446a9eb02267dc554f35030f51d5abd706095b57f751')
 
 build() {
     cd "$pkgname-$pkgver"
