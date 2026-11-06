@@ -1,15 +1,20 @@
-# Maintainer: tsdun
+# Maintainer: Sduniii <tobias@sduni.de>
 pkgname=brscan5-longpaper-fix
 pkgver=1.0.0
 pkgrel=1
 pkgdesc="SANE driver shim to enable long paper & receipt scanning up to 1.82m on Brother DS-740D and brscan5 scanners"
 arch=('x86_64')
-url="https://github.com/tsdun/brscan5-longpaper-fix"
+url="https://github.com/Sduniii/brscan5-longpaper-fix"
 license=('MIT')
 depends=('brscan5' 'sane')
 makedepends=('gcc' 'make')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+install=brother5-longpaper.install
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz"
+        "brother5-longpaper.hook"
+        "apply-patch.sh")
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
 
 build() {
     cd "$pkgname-$pkgver"
@@ -18,7 +23,12 @@ build() {
 
 package() {
     cd "$pkgname-$pkgver"
-    install -Dm755 out/libbrother5_longpaper.so "$pkgdir/usr/lib/libbrother5_longpaper.so"
+    install -Dm755 out/libbrother5_longpaper.so "$pkgdir/usr/lib/brother5-longpaper/libbrother5_longpaper.so"
+    install -Dm755 scripts/scan-bon "$pkgdir/usr/bin/scan-bon"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+    cd "$srcdir"
+    install -Dm755 apply-patch.sh "$pkgdir/usr/lib/brother5-longpaper/apply-patch.sh"
+    install -Dm644 brother5-longpaper.hook "$pkgdir/usr/share/libalpm/hooks/brother5-longpaper.hook"
 }
