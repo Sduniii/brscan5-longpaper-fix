@@ -1,6 +1,10 @@
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra -fPIC
-LDFLAGS ?= -shared -ldl
+CFLAGS ?= -O2 -Wall -Wextra
+LDFLAGS ?= 
+
+# Ensure PIC and shared library flags are always included
+FPIC_FLAGS = -fPIC
+SO_FLAGS = -shared -ldl
 
 PREFIX ?= /usr
 LIBDIR ?= $(PREFIX)/lib
@@ -14,7 +18,7 @@ out:
 	mkdir -p out
 
 $(TARGET): src/brother5_longpaper.c | out
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(FPIC_FLAGS) -o $@ $< $(LDFLAGS) $(SO_FLAGS)
 
 clean:
 	rm -rf out
